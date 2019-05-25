@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<head>
+	<style>
+	        body {
+	            font-family: Helvetica, Arial, sans-serif
+	        }
+
+	        h1 {
+	            background-color: #2a5599;
+	            color: white;
+	            padding: 5px;
+	        }
+
+	        h6{
+	        	margin-top: 0.67em;
+			  	margin-bottom: 0.67em;
+			  	margin-left: 5;
+			  	margin-right: 0;
+			  	font-weight: bold;	        
+			}
+	        
+	        .legend {
+	  			font-size: 14px;
+			}
+
+			svg {
+				border: 1px solid white;
+				font-family: Helvetica, Arial, sans-serif
+			}
+
+	        .mainview{
+	        	display: flex;
+	        	flex-direction: row;
+	        }
+	</style>
+
+	    <!-- Load d3.js -->
+	<script src="d3.js"></script>
+</head>
+
+<body>
+    <h1>Distribution of Donations from France to Other Countries Over Time</h1>
+    <div class="mainview">
+        <div>
+           	<h6>Most Common Receiver</h6>
+            <svg id="received"></svg>
+            <h6>Least Common Receiver</h6>
+
+        </div>
+    </div>
+</body>
+
+<script>
+
+let store = {}
+
+	function loadData(){
+		return Promise.all([
+	        d3.csv("aiddata-countries-only.csv"),
+	    ]).then(dataset => {
+			store.aiddata = dataset[0]
+	        return store;
+	    })
+	}
+
+	
+	function getCountryData(data){
+		
+	let result = data.reduce((result,d)=> {
+	    let currentRecipientData = result[parseInt(d.commitment_amount_usd_constant)] || {
+	     		"Amount": parseInt(d.commitment_amount_usd_constant), //amount received for a specific donation
+	     		"Country": d.recipient, // country that received the donation
+	     		"Year": parseInt(d.year) //reason for receiving the donation
+	     	}
+	     		if(d.donor == 'France')
+	            	result[d.commitment_amount_usd_constant] = currentRecipientData;
+	     	return result;
+	     }, {})
+
+	    //We use this to convert the dictionary produced by the code above, into a list, that will make it easier to create the visualization. 
+	    result = Object.keys(result).map(key => result[key])
+	    // result2 = Object.keys(result2).map(key => result2[key])
+
+	    result = result.sort((a,b) => { // sort the list by country name
+	    	return d3.descending(b.Country, a.Country)
+	    })
+	    result = result.sort((a,b) => { // sort the list by year
+	    	return d3.ascending(b.Year, a.Year)
+	    })
+
+	    console.log(result) //view raw results of all donations
+	    // console.log(result2)
+	    
+
+	    receivedResults = [] // condensed array that stores cummulative amount received by a country for each year
+	    var Amount = 0 //counter for the amount received for a specific country and reason
+	    var Country = "" // keep track of current country in array
+	    var Year = "" // keep track of current year for a specific country in array
+	    var i  //counter
+
+	    for(i = 0; i < result.length; i++){   	
+	    	
+	    	while((i < result.length-1) && (result[i].Year == result[i+1].Year)){ //loop through entries where adjacent years are same (we already sorted raw results)
+	    		Country = result[i].Country
+	    		Year = result[i].Year
+	    		Amount = parseInt(result[i].Amount)
+	    		
+	    		while((i < result.length-1) && (result[i].Country == result[i+1].Country)){ // while two adjacent country entries have same name
+	    			Amount += parseInt(result[i+1].Amount) //increment counter
+	    			i += 1
+	    		}
+
+	    		if(receivedResults.findIndex(function(d){ return d.Country == Country && d.Year == Year}) == -1) // if no amount exists yet for a country & reason
+	    			receivedResults.push({Amount, Country, Year})
+	    		else{
+	    			index = receivedResults.findIndex(function(d){ return d.Country == Country && d.Year == Year})
+	    			receivedResults[index].Amount += Amount //update amount if entry already exists for country & reason
+	    		}
+	    		i +=1
+	      	}
+	    }
+	
+ 		// Formating Data
+ 		receivedAmounts = receivedResults.flatMap(x => [{"Country": x.Country, "Amount": x.Amount}]);
+
+		// Calculate the avg received value to use for sorting countries
+		countDonations = d3.nest().key(function(d){ return d.Country; })
+		    
+				.rollup(function(v) { return v.length; })		    
+		    
+				.entries(receivedAmounts)
+				.map(function(d){ return { "Country": d.key, "Count": d.value}; });		    
+
+		console.log(countDonations)
+		
+		receivedResults = receivedResults.sort((a,b) => { // sort the list by country name
+	    	bCount = countDonations.find(function(d){ return d.Country == b.Country}).Count
+	    	aCount = countDonations.find(function(d){ return d.Country == a.Country}).Count
+	    	return d3.ascending(bCount, aCount)
+	    })
+
+
+		// Normalize the amount between 0 and 1, relative to each country
+		maxDonations = d3.nest().key(function(d){ return d.Country; })
+		    
+				.rollup(function(leaves){return d3.max(leaves, function(d){ return Math.abs(d.Amount); });})		    
+		    
+				.entries(receivedAmounts)
+				.map(function(d){ return { "Country": d.key, "Max": d.value}; });		    
+
+		console.log(maxDonations)
+		
+		receivedResults.forEach(function(element) { 
+			maxAmount = maxDonations.find(function(d){ return d.Country == element.Country}).Max
+			element.Amount = element.Amount/maxAmount
+		})
+
+// Considered sorting the countries based on avg amount received from France, but felt it didn't show as much interesting patterns
+// Kept the code here just in case
+
+		// Calculate the avg received value to use for sorting countries
+		// avgDonations = d3.nest().key(function(d){ return d.Country; })
+		    
+		// 		.rollup(function(leaves){return d3.mean(leaves, function(d){ return d.Amount; });})		    
+		    
+		// 		.entries(receivedAmounts)
+		// 		.map(function(d){ return { "Country": d.key, "Avg": d.value}; });		    
+
+		// console.log(avgDonations)
+		
+		// receivedResults = receivedResults.sort((a,b) => { // sort the list by country name
+	 //    	bAvg = avgDonations.find(function(d){ return d.Country == b.Country}).Avg
+	 //    	aAvg = avgDonations.find(function(d){ return d.Country == a.Country}).Avg
+	 //    	return d3.ascending(bAvg, aAvg)
+	 //    })
+		
+		// sort the list by avg amount
+		// receivedResults = receivedResults.sort((a,b) => { 
+	 //    	bAvg = avgDonations.find(function(d){ return d.Country == b.Country}).Avg
+	 //    	aAvg = avgDonations.find(function(d){ return d.Country == a.Country}).Avg
+	 //    	return d3.ascending(bAvg, aAvg)
+	 //    })
+
+
+ 		return receivedResults;
+	}
+	
+	function showData() {
+	    let aiddata = store.aiddata
+	    let receivedData = getCountryData(store.aiddata)
+
+	    console.log(receivedData)
+
+	    drawReceivedChart(receivedData)
+	}
+
+	function drawReceivedChart(data){
+		let config = getReceivedChartConfig()
+        let scales = getChartScales(data, config);
+        drawSquaresReceivedChart(data, scales, config)
+    	drawAxesReceivedChart(scales, config);
+	}
+  	
+
+	loadData().then(showData);
+
+	function getReceivedChartConfig() {
+	    let width = 1500;
+	    let height = 800;
+
+	    var margin = {top: 10, right: 30, bottom: 20, left: 130}
+
+	    //The body is the are that will be occupied by the squares.
+	    let bodyHeight = height - margin.top - margin.bottom
+	    let bodyWidth = width - margin.left - margin.right
+	    
+	    let container = d3.select("#received") 
+	    container
+	        .attr("width", width)
+	        .attr("height", height)
+
+	    return { width, height, margin, bodyHeight, bodyWidth, container }
+	}
+	
+	function getChartScales(data, config) {
+	    let { bodyWidth, bodyHeight } = config;
+
+	    var years = []
+		for (var i = 1973; i <= 2013; i++) {
+		    years.push(i)
+		}
+
+	    let xScale = d3.scaleBand()
+	    	.range([0, bodyWidth])
+	        .domain(years)
+	       	.padding(0.05)
+	   
+	    let yScale = d3.scaleBand()
+	        .range([0, bodyHeight])
+	        .domain(data.map(a => a.Country))
+	        .padding(0.2)
+
+	    return { xScale, yScale }
+	}	
+
+	function drawSquaresReceivedChart(data, scales, config) {
+		let {bodyHeight, bodyWidth, margin, container} = config; // this is equivalent to 'let margin = config.margin; let container = config.container'
+		
+		let {xScale, yScale} = scales
+		
+
+		var min = d3.min(data, function(d) { return d.Amount })
+		var max = d3.max(data, function(d) { return d.Amount })
+
+		var color = d3.scaleSequential(d3.interpolateReds)
+    				.domain([0, 1])
+
+		let body = container.append("g")
+		  .style("transform", `translate(${margin.left}px,${margin.top}px)`)	
+
+		let bars = body.selectAll(".bar")
+				.data(data)
+				.enter()
+				.append("g")
+
+		bars.append("rect")
+		  	.attr("width", xScale.bandwidth())
+			.attr("height", yScale.bandwidth())
+		  	.attr("x", (d) => xScale(d.Year))
+		  	.attr("y", (d) => yScale(d.Country))
+		  	.attr("fill", d => color(d.Amount)) //the proportional amount received dictates the color of the square
+
+		// Creating a Legend Below
+		var color_range = d3.interpolateNumber(0, 1);
+		var ext_color_domain = [color_range(0), color_range(0.1), color_range(0.2), color_range(0.3), color_range(0.4), color_range(0.5), color_range(0.6), color_range(0.7), color_range(0.8), color_range(0.9),color_range(1)]
+
+  		var legend_labels = ["Received Min", "", "", "", "", "", "", "", "", "Recevied Max"]
+
+		var svg = d3.select("body").append("svg")
+            .attr("width",  1200)
+            .attr("height", 100)
+            .style("margin", "10px auto");
+
+		var legend = svg.selectAll("g.legend")
+		.data(ext_color_domain)
+		.enter().append("g")
+		.attr("class", "legend");
+
+		var ls_w = 60, ls_h = 40;
+		
+legend.append("text")
+		.attr("x", function(d, i){ return 990 - (1.58*i*ls_h -10);})
+		.attr("y", 15)
+		.text(function(d, i){ return legend_labels[i]; });	
+		
+		legend.append("rect")
+		.attr("x", function(d, i){ return 1150 - (i*ls_w) - 2*ls_w;})
+		.attr("y", 20)
+		.attr("width", ls_w)
+		.attr("height", ls_h)
+		.style("fill", function(d, i) { return color(d); })
+		.style("opacity", 0.8);
+
+		
+	}
+
+	
+	function drawAxesReceivedChart(scales, config){
+		let {xScale, yScale} = scales
+		let {container, margin, height, width} = config;
+		
+		let axisY = d3.axisLeft(yScale)
+
+		container.append("g")
+		.style("transform", 
+		    `translate(${margin.left}px, ${margin.top}px)`)
+
+		.call(axisY)
+
+		let axisX = d3.axisBottom(xScale)
+		container.append("g")
+		.style("transform", `translate(${margin.left}px,${height - margin.bottom}px)`)
+		.call(axisX)
+		.selectAll("text")
+
+	}
+
+</script>

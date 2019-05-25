@@ -1,0 +1,308 @@
+<html>
+<head>
+    <style>
+        body {
+            font-family: Helvetica, Arial, sans-serif
+        }
+
+        h1 {
+            background-color: #2a5599;
+
+            color: white;
+            padding: 5px;
+        }
+        
+        h2{
+        	text-align: center;
+        }
+        .legend {
+  			font-size: 12px;
+		}
+
+
+		svg {
+			border: 10px solid white;
+		}
+
+        .mainview{
+        	display: flex;
+        	flex-direction: row;
+        }
+    </style>
+
+    <script src="d3.js"></script>
+
+</head>
+
+<body>
+    <h1>Contribution Amounts By Geographical Region</h1>
+    <div class="mainView">
+        <div>
+            <h2>Donated Contributions</h2>
+            <svg id="donated"></svg>
+        </div>
+        <div>
+            <h2>Received Contributions</h2>
+            <svg id="received"></svg>
+        </div>
+    </div>
+</body>
+
+<script> 
+    let store = {}
+
+    function loadData() {
+	        return Promise.all([
+	        d3.csv("aiddata-countries-only.csv"),
+	        d3.json("countries.geo.json"),
+	    ]).then(datasets => {
+	        store.aiddata = datasets[0];
+	        store.geoJSON = datasets[1]
+	        return store;
+	    })
+	}
+
+	function getCountryData(data){
+		
+		// dictionary for recipient data
+	    let result = data.reduce((result,d)=> {
+	     	let currentRecipientData = result[d.recipient] || {
+	     		"Country": d.recipient,
+	     		"Amountreceived": 0
+	     	}
+
+	     	currentRecipientData.Amountreceived += parseInt(d.commitment_amount_usd_constant);
+	       	result[d.recipient] = currentRecipientData;
+	     	return result;
+	     }, {})
+		
+		// dictionary for donor data
+		let result2 = data.reduce((result2, d) => {
+	        let currentDonorData = result2[d.donor] || {
+	            "Country": d.donor,
+	            "AmountDonated": 0,
+	        }
+	       	
+	       	currentDonorData.AmountDonated += parseInt(d.commitment_amount_usd_constant);
+	       	result2[d.donor] = currentDonorData;
+	        return result2;
+	    }, {})
+
+
+	    //We use this to convert the dictionary produced by the code above, into a list, that will make it easier to create the visualization. 
+	    result = Object.keys(result).map(key => result[key])
+	    result2 = Object.keys(result2).map(key => result2[key])
+
+	    // Sort the two dictionaries by country name
+	    result = result.sort((a,b) => { 
+	    	return d3.descending(b.Country, a.Country)
+	    })
+	    result2 = result2.sort((a,b) => { 
+	    	return d3.descending(b.Country, a.Country)
+	    })
+
+	    // To prevent confusing when picking between North vs South Korea
+	    for (let key of result.keys()){
+	    	if(result[key].Country == "Korea"){
+	    		result[key].Country = "South Korea"; //renamed to match geo dataset
+	    	}
+	    }
+	    for (let key of result2.keys()){
+	    	if(result2[key].Country == "Korea"){
+	    		result2[key].Country = "South Korea";
+	    	}
+	    }
+
+	    return {result, result2}
+	}
+	
+	function showData() {
+	    //Get the routes from our store variable
+	    let aiddata = store.aiddata
+	    // Compute the number of routes per airline.
+	    let {result, result2} = getCountryData(store.aiddata);
+	    let receivedData = result
+	    let donatedData = result2
+	    console.log(receivedData)
+	    console.log(donatedData)
+
+	    drawDonatedMap(donatedData, store.geoJSON)
+        drawReceivedMap(receivedData, store.geoJSON) //Using the data saved on loadData
+	}
+
+	loadData().then(showData);
+
+	function getDonatedMapConfig(){
+	  let width = 700;
+	  let height = 500;
+	  let container = d3.select("#donated")
+	  
+	  container
+	        .attr("width", width)
+	        .attr("height", height) 
+	  return {width, height, container}
+	}
+
+	function getReceivedMapConfig(){
+	  let width = 700;
+	  let height = 500;
+	  let container = d3.select("#received")
+	  
+	  container
+	        .attr("width", width)
+	        .attr("height", height)
+	  return {width, height, container}
+	}
+
+
+	function getMapProjection(config) {
+	  let {width, height} = config;
+	  let projection = d3.geoMercator()
+	  projection.scale(113) //zoom in on the map
+	            .translate([width / 2, height / 2 + 25])
+	            
+	  store.mapProjection = projection;
+	  return projection;
+	}
+
+	function drawDonatedBaseMap(container, countries, projection, data){
+    	// data is donation data for each country
+    	var color = d3.scaleSequential(d3.interpolateReds)
+    				.domain([d3.min(data, function(d) { return d.AmountDonated }),
+    						d3.max(data, function(d) { return d.AmountDonated })])
+				
+		let path = d3.geoPath()
+					 .projection(projection)
+	  
+	 	container.selectAll("path")
+	 			.data(countries) //countries is geo dataset
+	      		.enter().append("path")
+	      		.attr("d", path)
+	      		.attr("stroke", "#ccc")
+	      		.attr("fill", function(d) {
+				  	if (data.find(function(item) { return d.properties.name.includes(item.Country); }) == undefined) //if a country is not part of geo dataset
+				  		return '#000000'; //color it black
+				    else{
+				    	//find the amount for that country
+				    	const amount = ++data.find(function(item) { return d.properties.name.includes(item.Country); }).AmountDonated; 
+				    
+				    	return color(amount);
+				    }
+				})
+				.attr("class", function(d) {
+				    return d.properties.name;
+				});
+
+		
+		// Creating a Legend
+		var min = d3.min(data, function(d) { return d.AmountDonated })
+		var max = d3.max(data, function(d) { return d.AmountDonated })
+		var ext_color_domain = [min, (max-min) / 4, (max-min) / 2, (max-min)*3/4, max]
+
+  		var legend_labels = ["$"+String(min), "", "", "", "$"+String(max)]
+		var svg = d3.select("body").append("svg")
+            .attr("width",  300)
+            .attr("height", 70)
+            .style("margin", "10px auto");
+
+		var legend = svg.selectAll("g.legend")
+		.data(ext_color_domain)
+		.enter().append("g")
+		.attr("class", "legend");
+
+		var ls_w = 40, ls_h = 40;
+
+		legend.append("rect") //color scale
+		.attr("x", function(d, i){ return 260 - (i*ls_w) - 2*ls_w;})
+		.attr("y", 0)
+		.attr("width", ls_w)
+		.attr("height", ls_h)
+		.attr("transform", `translate(${40}, ${0})`)
+		.style("fill", function(d, i) { return color(d); })
+		.style("opacity", 0.8);
+
+		legend.append("text") //labels
+		.attr("x", function(d, i){ return 180 - (i*ls_h*1.2);})
+		.attr("y", 55)
+		.attr("transform", `translate(${40}, ${0})`)
+		.text(function(d, i){ return legend_labels[i]; });
+	}
+
+
+	function drawReceivedBaseMap(container, countries, projection, data){
+		// data is donation data for each country
+		var color = d3.scaleSequential(d3.interpolateBlues)
+    				.domain([d3.min(data, function(d) { return d.Amountreceived }),
+    						d3.max(data, function(d) { return d.Amountreceived })])
+		
+		let path = d3.geoPath()
+					 .projection(projection)
+
+	  	container.selectAll("path")
+	  			.data(countries) //countries is geo dataset
+			    .enter().append("path")
+			    .attr("d", path)
+			    .attr("stroke", "#ccc")
+		      	.attr("fill", function(d) {
+				  	if (data.find(function(item) { return d.properties.name.includes(item.Country); }) == undefined) //if a country is not part of geo dataset
+				  		return '#000000'; //color it black
+				    else{
+				    	//find the amount for that country
+				    	const amount = ++data.find(function(item) { return d.properties.name.includes(item.Country); }).Amountreceived;
+				    
+				    	return color(amount);
+				    }
+				})
+				.attr("class", function(d) {
+				    return d.properties.name;
+				});
+
+		// Creating a Legend
+		var min = d3.min(data, function(d) { return d.Amountreceived })
+		var max = d3.max(data, function(d) { return d.Amountreceived })
+		var ext_color_domain = [min, (max-min) / 4, (max-min) / 2, (max-min)*3/4, max]
+
+  		var legend_labels = ["$"+String(min), "", "", "", "$"+String(max)]
+		var svg = d3.select("body").append("svg")
+            .attr("width",  1000)
+            .attr("height", 70)
+            .style("margin", "10px auto");
+
+		var legend = svg.selectAll("g.legend")
+		.data(ext_color_domain)
+		.enter().append("g")
+		.attr("class", "legend");
+
+		var ls_w = 40, ls_h = 40;
+
+		legend.append("rect") //color scale
+		.attr("x", function(d, i){ return 260 - (i*ls_w) - 2*ls_w;})
+		.attr("y", 0)
+		.attr("width", ls_w)
+		.attr("height", ls_h)
+		.attr("transform", `translate(${420}, ${0})`)
+		.style("fill", function(d, i) { return color(d); })
+		.style("opacity", 0.8);
+
+		legend.append("text") //labels
+		.attr("x", function(d, i){ return 160 - (i*ls_h*1.2);})
+		.attr("y", 55)
+		.attr("transform", `translate(${440}, ${0})`)
+		.text(function(d, i){ return legend_labels[i]; });
+	}
+
+
+	function drawDonatedMap(data, geoJeon) {
+        let config = getDonatedMapConfig()
+	    let projection = getMapProjection(config)
+	    drawDonatedBaseMap(config.container, geoJeon.features, projection, data)
+	}
+		function drawReceivedMap(data, geoJeon) {
+        let config = getReceivedMapConfig();
+	    let projection = getMapProjection(config)
+	    drawReceivedBaseMap(config.container, geoJeon.features, projection, data)
+	}
+
+</script>
+
+</html>

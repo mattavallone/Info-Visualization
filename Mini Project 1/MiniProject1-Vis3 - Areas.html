@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<head>
+	<style>
+	        body {
+	            font-family: Helvetica, Arial, sans-serif
+	        }
+
+	        h1 {
+	            background-color: #2a5599;
+	            color: white;
+	            padding: 5px;
+	        }
+
+			svg {
+				border: 1px solid black;
+			}
+
+	        .mainview{
+	        	display: flex;
+	        	flex-direction: row;
+	        }
+	</style>
+
+	    <!-- Load d3.js -->
+	<script src="d3.js"></script>
+</head>
+
+<body>
+    <h1>Donations Received for Top 5 Most Common Reasons, in USD</h1>
+    <div class="mainView">
+        <div>
+            <svg id="vis_3"></svg>  
+        </div>
+        <div>
+            <h2>Legend</h2>
+            <svg id="legend"></svg>
+        </div>
+    </div>
+</body>
+
+<script>
+
+let store = {}
+
+	function loadData(){
+		return Promise.all([
+	        d3.csv("aiddata-countries-only.csv"),
+	    ]).then(dataset => {
+			store.aiddata = dataset[0]
+	        return store;
+	    })
+	}
+
+	function getTop5Reasons(data){
+		let result = data.reduce((result, d) => {
+	        let currentData = result[d.coalesced_purpose_name] || {
+	            "Reason": d.coalesced_purpose_name,
+	            "Count": 0
+	        }
+	        
+	        currentData.Count += 1; //keep a running total of the most popular purposes for donations
+	        
+	        result[d.coalesced_purpose_name] = currentData;
+
+	        return result;
+	    }, {})
+
+	    //We use this to convert the dictionary produced by the code above, into a list, that will make it easier to create the visualization. 
+	    result = Object.keys(result).map(key => result[key])
+	    result = result.sort((a,b) => {
+	    	return d3.descending(a.Count, b.Count) //sort by most popular
+	    })
+
+	    result = result.slice(1,6) // start at index 1 to ignore non specified purposes (which was most common)
+
+	    return result
+	}
+
+	function getCountryData(data, top5reasons){
+		// dictionary for recipient data (only count top 5 most common reasons)
+	    let result = data.reduce((result,d)=> {
+	     	let currentRecipientData = result[parseInt(d.commitment_amount_usd_constant)] || {
+	     		"Amount": d.commitment_amount_usd_constant, //amount received for a specific donation
+	     		"Country": d.recipient, // country that received the donation
+	     		"Reason": d.coalesced_purpose_name //reason for receiving the donation
+	     	}
+
+	     	if(top5reasons.find(function(item) { return item.Reason == d.coalesced_purpose_name; }) != undefined){ //if reason is one of the top 5 reasons							       		
+		       		result[d.commitment_amount_usd_constant] = currentRecipientData;
+	       	}
+	     	return result;
+	     }, {})
+		
+
+	    //We use this to convert the dictionary produced by the code above, into a list, that will make it easier to create the visualization. 
+	    result = Object.keys(result).map(key => result[key])
+
+	    result = result.sort((a,b) => { // sort the list by country name
+	    	return d3.descending(b.Country, a.Country)
+	    })
+
+	    console.log(result) //view raw results of all donations
+
+	    
+	    // From here, we need to condense all the donation entries into at most 5 per country, with cummulative total amounts received for each purpose
+
+	    cleanResult = [] // condensed array that stores cummulative amount received by a country for one of the top 5 donations
+	    var Amount = 0 //counter for the amount received for a specific country and reason
+	    var Country = "" // keep track of current country in array
+	    var Reason = "" // keep track of current reason for a specific country in array
+	    var i  //counter
+
+	    for(i = 0; i < result.length; i++){   	
+	    	
+	    	while((i < result.length-1) && (result[i].Country == result[i+1].Country)){ //loop through entries where adjacent country names are same (we already sorted raw results by country name)
+	    		Country = result[i].Country
+	    		Reason = result[i].Reason
+	    		Amount = parseInt(result[i].Amount)
+	    		
+	    		while((i < result.length-1) && (result[i].Reason == result[i+1].Reason)){ // while two adjacent country entries have same reason
+	    			Amount += parseInt(result[i+1].Amount) //increment counter
+	    			i += 1
+	    		}
+
+	    		if(cleanResult.findIndex(function(d){ return d.Country == Country && d.Reason == Reason}) == -1) // if no amount exists yet for a country & reason
+	    			cleanResult.push({Amount, Country, Reason})
+	    		else{
+	    			index = cleanResult.findIndex(function(d){ return d.Country == Country && d.Reason == Reason})
+	    			cleanResult[index].Amount += Amount //update amount if entry already exists for country & reason
+	    		}
+	    		i +=1
+	      	}
+	    }
+
+	    return cleanResult
+	}
+
+	function drawReasonsChart(data, reasons){
+		let config = getReasonsChartConfig()
+        let scales = getReasonsChartScales(data, reasons, config);
+        drawSquaresReasonsChart(data, scales, config)
+    	drawAxesReasonsChart(scales, config);
+    	makeLegend(data, scales)
+	}
+  	
+  	function showData() {
+  		let top5reasons = getTop5Reasons(store.aiddata);
+	    console.log(top5reasons)
+	    let receivedData = getCountryData(store.aiddata, top5reasons);
+	    console.log(receivedData)
+	    drawReasonsChart(receivedData, top5reasons)
+	}
+
+	loadData().then(showData);
+
+	function getReasonsChartConfig() {
+	    let width = 1130*1.8; //scaling each to make vis larger
+	    let height = 270*2.5;
+
+	    var margin = {top: 30, right: 30, bottom: 90, left: 230}
+
+	    //The body is the are that will be occupied by the squares.
+	    let bodyHeight = height - margin.top - margin.bottom
+	    let bodyWidth = width - margin.left - margin.right
+	    
+	    let container = d3.select("#vis_3") 
+	    container
+	        .attr("width", width)
+	        .attr("height", height)
+
+	    return { width, height, margin, bodyHeight, bodyWidth, container }
+	}
+
+	function getReasonsChartScales(donations, top5reasons, config) {
+	    let { bodyWidth, bodyHeight } = config;
+
+	    let xScale = d3.scaleBand()
+	        .range([0, bodyWidth])
+	        .domain(donations.map(a => a.Country))
+	       	.padding(0.2)
+	   
+	    let yScale = d3.scaleBand()
+	        .range([0, bodyHeight])
+	        .domain(top5reasons.map(a => a.Reason))
+	        .padding(0.2)
+
+	    let xArea = d3.scaleLinear() //scales for computing the areas 
+	    	.range([8,80])
+  			.domain([d3.min(donations, function(d) { return d.Amount }), d3.max(donations, function(d) { return d.Amount })])
+
+  		let yArea = d3.scaleLinear()
+  			.range([8,80])
+  			.domain([d3.min(donations, function(d) { return d.Amount }), d3.max(donations, function(d) { return d.Amount })])
+
+	    return { xScale, yScale, xArea, yArea }
+	}	
+
+	function drawSquaresReasonsChart(donations, scales, config) {
+		let {bodyHeight, bodyWidth, margin, container} = config; // this is equivalent to 'let margin = config.margin; let container = config.container'
+		
+		let {xScale, yScale, xArea, yArea} = scales
+		
+		let body = container.append("g")
+		  .style("transform", `translate(${margin.left}px,${margin.top}px)`)	
+
+		let bars = body.selectAll(".bar")
+				.data(donations)
+				.enter()
+				.append("g")
+
+		bars.append("rect")
+		  	.attr("width", (d) => xArea(d.Amount)) // the amount received dictates the area of the square
+			.attr("height", (d) => yArea(d.Amount))
+		  	.attr("x", (d) => xScale(d.Country) - xArea(d.Amount)/2)
+		  	.attr("y", (d) => yScale(d.Reason) - yArea(d.Amount)/2)
+		  	.attr("transform", `translate(${xScale.bandwidth()/2}, ${yScale.bandwidth()/2})`)
+		  	.attr("fill", (d) => '#377eb8')	
+	}
+
+	function drawAxesReasonsChart(scales, config){
+		let {xScale, yScale} = scales
+		let {container, margin, height, width} = config;
+		
+		let axisY = d3.axisLeft(yScale)
+
+		container.append("g")
+		.style("transform", 
+		    `translate(${margin.left}px, ${margin.top}px)`)
+
+		.call(axisY)
+
+		let axisX = d3.axisBottom(xScale)
+		container.append("g")
+		.style("transform", `translate(${margin.left}px,${height - margin.bottom}px)`)
+		.call(axisX)
+		.selectAll("text")
+		.attr("transform", "rotate(45)")
+		.attr("text-anchor", "start")
+	}
+
+	function makeLegend(donations, scales){
+
+		let {xScale, yScale, xArea, yArea} = scales
+
+		let max = d3.max(donations, function(d) { return d.Amount })
+		let min = d3.min(donations, function(d) { return d.Amount })
+
+		// use 6 areas for legend
+		let data = [min, (max-min) / 6, (max-min)*2 / 6, (max-min)*3/6, (max-min)*4/6, (max-min)*5/6, max]
+		let labels = ["$"+String(min), "$"+String((max-min) / 6), "$"+String((max-min)*2 / 6), "$"+String((max-min)*3/6), "$"+String((max-min)*4/6), "$"+String((max-min)*5/6), "$"+String(max)]
+
+		//setting dimensions for legend
+		let lwidth = 900;
+	  	let lheight = 140;
+	  	let lmargin = {
+	        top: 10,
+	        bottom: 10,
+	        left: 30,
+	        right: 10
+	    }
+	  	
+	  	let legendContainer = d3.select("#legend")
+	  
+	  	legendContainer
+	        .attr("width", lwidth)
+	        .attr("height", lheight) 
+
+	    let leg = legendContainer.append("g")
+		  .style("transform", `translate(${lmargin.left}px,${lmargin.top}px)`)	
+		
+		let boxes = leg.selectAll(".rect")
+				.data(data)
+				.enter()
+				.append("g")
+				.classed("rect", true)
+
+		boxes.append("rect")
+		    .attr("width", (d) => xArea(d))
+			.attr("height", (d) => yArea(d))
+		  	.attr("x", function(d,i){ return 40 + (i*120) - xArea(d)/2})
+		  	.attr("y", (d) => lheight - 130 - yArea(d)/2)
+		  	.attr("fill", (d) => '#377eb8')
+		  	.attr("transform", `translate(${0}, ${50})`)
+
+		boxes.append("text")
+			.attr("x", function(d,i){ return (i*116)})
+			.attr("y", (d) => lheight - 140)
+			.attr("transform", `translate(${10}, ${120})`)
+			.text(function(d, i){ return labels[i]; });
+
+	}
+
+</script>
